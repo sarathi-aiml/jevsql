@@ -1,0 +1,10 @@
+# catalog contains real table names, columns, and sample data — never commit
+jevsql_catalog.json
+
+# local launcher with machine-specific paths/identifiers
+run.sh
+
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
