@@ -3,12 +3,62 @@
 A weekend experiment with [Jev](https://typesafe.ai/), TypeSafe AI's "System One"
 model that returns **typed, probability-calibrated decisions instead of text**.
 
+## How Jev differs from a normal LLM
+
+A generative LLM produces tokens: you send a prompt, it writes an answer one
+token at a time, and if you need structure you parse it out and hope. Jev
+never generates text at all. You send your program's **state** plus a battery
+of **typed questions**, and it answers all of them in one parallel pass:
+
+```python
+r = client.system_one(
+    state="I was charged twice for order A-104. Please refund the duplicate.",
+    questions={
+        "department": Choice(instructions="Which team should handle this",
+                             criteria={"billing": "Payments/refunds",
+                                       "technical": "Bugs",
+                                       "sales": "Pricing questions"}),
+        "frustration": Score(instructions="How frustrated is the customer",
+                             criteria=["Calm", "Frustrated but civil", "Angry"]),
+        "wants_refund": Noul(instructions="Customer explicitly asks for a refund"),
+    },
+)
+r.answers["department"].choice       # "billing"
+r.answers["department"].confidence   # 0.97  <- calibrated: right ~97% of the time
+r.answers["frustration"].score       # 1.2   (between "Calm" and "Frustrated")
+r.answers["wants_refund"].noul       # 0.94  (probability of yes)
+```
+
+Three primitives, that's the whole API: **Choice** (pick one of up to 255
+options), **Score** (a position on an ordered scale), **Noul** (yes/no as a
+probability). Your code branches on the answers the way it branches on any
+other value. The distinction in practice:
+
+| | Generative LLM (GPT-5, Claude, ...) | Jev (System One) |
+|---|---|---|
+| Output | Free text / JSON you parse | Typed values, no parsing |
+| Structure errors | 0.6–45% depending on model/mode | 0% by construction |
+| Confidence | Vibes ("I'm fairly sure...") | Calibrated probability per answer (RLCD-trained: 0.8 means right ~80% of the time) |
+| 10 questions | ~10x the output cost/latency | ~same latency as 1 (parallel pass) |
+| Latency | 2–6 s typical | 70–500 ms |
+| Price | $1.25–$10 /MTok in + output billed | $0.042 /MTok in, **output free** |
+| Good at | Composing anything: prose, code, SQL | Deciding: route, classify, rank, gate |
+| Can't do | Be cheap/fast/calibrated enough to run on every record | Generate anything — no text, no code |
+
+Neither replaces the other. Jev is the cheap, fast, calibrated decision layer;
+generative models remain the composition layer. The natural architecture is a
+cascade: Jev decides *what* to do on every request, a generative model is
+invoked only for the fraction that needs one.
+
+## The idea I tried: text-to-SQL
+
 Traditional text-to-SQL asks a generative LLM to write a SQL string, then hopes
-it referenced real tables, real columns, and nothing injectable. This flips the
-design: **the model cannot hallucinate SQL because it never produces any.** Jev
-only answers typed questions my code defines — which table, which state, which
-column does the number 10,000 constrain — each with a calibrated confidence.
-Code assembles those answers onto a parameterized SELECT.
+it referenced real tables, real columns, and nothing injectable. Jev's
+constraint flips the design: **the model cannot hallucinate SQL because it
+never produces any.** It only answers typed questions my code defines — which
+table, which state, which column does the number 10,000 constrain — each with
+a calibrated confidence. Code assembles those answers onto a parameterized
+SELECT.
 
 ```
 ? how many companies in Kollin county texas with more than 10 employees
@@ -62,6 +112,58 @@ Three design points worth stealing:
   collapses to 0.48 and the filter is refused with the best guess shown —
   instead of silently picking one and returning a confidently wrong count.
   Rephrase as "assessed total value under 500k" and it binds at 0.99.
+
+## More samples
+
+Mixed criteria, both directions, one question:
+
+```
+? businesses in Texas with more than 50 employees and less than 5 million in sales
+
+  intent     list         conf=0.81
+  table      business     conf=1.00
+  state      TX           conf=1.00
+  number     50 -> NoOfEmployees (>=)   conf=0.94
+  number     5e+06 -> Revenue (<=)      conf=0.87
+
+SELECT ... FROM business WHERE "StateCode" = 'TX'
+  AND TRY_TO_DOUBLE(TO_VARCHAR("NoOfEmployees")) >= 50
+  AND TRY_TO_DOUBLE(TO_VARCHAR("Revenue")) <= 5000000 LIMIT 25
+```
+
+No state mentioned — no filter invented (447ms, whole country):
+
+```
+? How many businesses have more than 10,000 in revenue?
+
+  intent     count        conf=1.00
+  table      business     conf=0.91
+  number     10000 -> Revenue (>=)      conf=0.97
+```
+
+Ambiguity refused, not guessed — the table has several near-identical value
+columns, so "worth" honestly can't be resolved:
+
+```
+? properties in Iowa over 100 acres worth less than 500k
+
+  number     100 -> ACRES (>=)          conf=1.00
+  number     500000 NOT APPLIED — best guess ASSESSED_TOTAL_VALUE
+             at conf=0.48, below 0.70 threshold
+```
+
+Rephrase precisely and the same filter binds at 0.99
+("...with assessed total value under 500k").
+
+Off-topic fails closed — zero SQL runs:
+
+```
+? what is the weather tomorrow
+
+Not confident enough on intent — please rephrase.
+Understood so far: {'intent': ('other', 1.0), 'table': ('business', 0.42),
+                    'state': ('none', 1.0)}
+```
 
 ## Measured time and cost
 
