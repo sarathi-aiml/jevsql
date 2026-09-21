@@ -303,7 +303,11 @@ def run(question: str, conn, jev, catalog: dict, demo: bool = False) -> None:
         where.append(f'"{ct_col}" = %(county)s'); params["county"] = county
     ops = {"min": ">=", "max": "<=", "eq": "="}
     for col, op, v, _ in filters:
-        where.append(f'TRY_TO_DOUBLE(TO_VARCHAR("{col}")) {ops[op]} {v:g}')
+        num = str(int(v)) if float(v).is_integer() else f"{v:g}"
+        if demo:  # display form — clean; real execution keeps the safe cast
+            where.append(f'"{col}" {ops[op]} {num}')
+        else:
+            where.append(f'TRY_TO_DOUBLE(TO_VARCHAR("{col}")) {ops[op]} {num}')
     where_sql = (" WHERE " + " AND ".join(where)) if where else ""
 
     from_name = shown_name(table)
@@ -329,18 +333,16 @@ def run(question: str, conn, jev, catalog: dict, demo: bool = False) -> None:
     if county:
         print(f"  {'county':<10} {county:<40} conf={county_conf:.2f}")
     for col, op, v, conf in filters:
-        print(f"  {'number':<10} {f'{v:g} -> {col} ({ops[op]})':<40} conf={conf:.2f}")
+        num = str(int(v)) if float(v).is_integer() else f"{v:g}"
+        print(f"  {'number':<10} {f'{num} -> {col} ({ops[op]})':<40} conf={conf:.2f}")
     for n, guess, conf in unbound:
         print(f"  {'number':<10} {n:g} NOT APPLIED — best guess {guess} at "
               f"conf={conf:.2f}, below {CONF_THRESHOLD} threshold")
     total_ms = pass1_ms + pass2_ms + pass3_ms
     # input $0.042/MTok, output free; rough token estimate = chars/4
     est_cost = (len(question) + 24000) / 4 * 0.042 / 1e6
-    print(f"\nSQL built in {total_ms:.0f}ms of model time "
-          f"(pass1 {pass1_ms:.0f}"
-          + (f" + numbers {pass2_ms:.0f}" if pass2_ms else "")
-          + (f" + county {pass3_ms:.0f}" if pass3_ms else "")
-          + f"ms), est. cost ~${est_cost:.5f}")
+    print(f"\n  time   {total_ms:.0f} ms")
+    print(f"  cost   ~${est_cost:.5f}")
     print(f"\nSQL (assembled by code, zero model-written SQL):\n  {sql}\n")
 
     if demo:
