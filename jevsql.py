@@ -322,28 +322,28 @@ def run(question: str, conn, jev, catalog: dict, demo: bool = False) -> None:
 
     # ---- Report -------------------------------------------------------------
     print(f'\nQ: "{question}"\n')
-    print("Typed slots (Jev, confidence-calibrated):")
-    print(f"  {'intent':<10} {core['intent'][0]:<40} conf={core['intent'][1]:.2f}")
-    print(f"  {'table':<10} {shown_name(table):<40} conf={core['table'][1]:.2f}")
+    print("decisions:")
+    print(f"  {'intent':<10} {core['intent'][0]:<40} {core['intent'][1]:.2f}")
+    print(f"  {'table':<10} {shown_name(table):<40} {core['table'][1]:.2f}")
     if alternates:
         print(f"  {'':<10} alternates: "
               + ", ".join(f"{t} ({p:.2f})" for t, p in alternates))
     if core["state"][0] != "none":
-        print(f"  {'state':<10} {core['state'][0]:<40} conf={core['state'][1]:.2f}")
+        print(f"  {'state':<10} {core['state'][0]:<40} {core['state'][1]:.2f}")
     if county:
-        print(f"  {'county':<10} {county:<40} conf={county_conf:.2f}")
+        print(f"  {'county':<10} {county:<40} {county_conf:.2f}")
     for col, op, v, conf in filters:
         num = str(int(v)) if float(v).is_integer() else f"{v:g}"
-        print(f"  {'number':<10} {f'{num} -> {col} ({ops[op]})':<40} conf={conf:.2f}")
+        print(f"  {'number':<10} {f'{num} -> {col} ({ops[op]})':<40} {conf:.2f}")
     for n, guess, conf in unbound:
         print(f"  {'number':<10} {n:g} NOT APPLIED — best guess {guess} at "
-              f"conf={conf:.2f}, below {CONF_THRESHOLD} threshold")
+              f"{conf:.2f}, below {CONF_THRESHOLD} threshold")
     total_ms = pass1_ms + pass2_ms + pass3_ms
     # input $0.042/MTok, output free; rough token estimate = chars/4
     est_cost = (len(question) + 24000) / 4 * 0.042 / 1e6
     print(f"\n  time   {total_ms:.0f} ms")
     print(f"  cost   ~${est_cost:.5f}")
-    print(f"\nSQL (assembled by code, zero model-written SQL):\n  {sql}\n")
+    print(f"\nSQL:\n  {sql}\n")
 
     if demo:
         return
